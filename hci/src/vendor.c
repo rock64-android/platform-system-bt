@@ -20,6 +20,7 @@
 
 #include <assert.h>
 #include <dlfcn.h>
+#include <string.h>
 
 #include "buffer_allocator.h"
 #include "bt_vendor_lib.h"
@@ -46,18 +47,30 @@ static const bt_vendor_callbacks_t lib_callbacks;
 static bool vendor_open(
     const uint8_t *local_bdaddr,
     const hci_t *hci_interface) {
+  char type[64], vendor_so[64];
   assert(lib_handle == NULL);
   hci = hci_interface;
 
-  lib_handle = dlopen(VENDOR_LIBRARY_NAME, RTLD_NOW);
+  extern int check_wifi_chip_type_string(char *type);
+  check_wifi_chip_type_string(type);
+  if (strstr(type, "AU")!=NULL || strstr(type, "BU")!=NULL) {
+    strcpy(vendor_so, "libbt-vendor-rtl8723bu.so");
+  } else if (!strncmp(type, "RTL", 3)) {
+    strcpy(vendor_so, "libbt-vendor-rtl8723bs.so");
+  } else {
+    strcpy(vendor_so, VENDOR_LIBRARY_NAME);
+  }
+  ALOGD("%s load %s", __func__, vendor_so);
+
+  lib_handle = dlopen(vendor_so, RTLD_NOW);
   if (!lib_handle) {
-    LOG_ERROR("%s unable to open %s: %s", __func__, VENDOR_LIBRARY_NAME, dlerror());
+    LOG_ERROR("%s unable to open %s: %s", __func__, vendor_so, dlerror());
     goto error;
   }
 
   lib_interface = (bt_vendor_interface_t *)dlsym(lib_handle, VENDOR_LIBRARY_SYMBOL_NAME);
   if (!lib_interface) {
-    LOG_ERROR("%s unable to find symbol %s in %s: %s", __func__, VENDOR_LIBRARY_SYMBOL_NAME, VENDOR_LIBRARY_NAME, dlerror());
+    LOG_ERROR("%s unable to find symbol %s in %s: %s", __func__, VENDOR_LIBRARY_SYMBOL_NAME, vendor_so, dlerror());
     goto error;
   }
 

@@ -131,7 +131,8 @@ LOCAL_SHARED_LIBRARIES := \
     libdl \
     liblog \
     libpower \
-    libz
+    libz \
+    libhardware_legacy
 
 LOCAL_STATIC_LIBRARIES := \
     libtinyxml2 \
