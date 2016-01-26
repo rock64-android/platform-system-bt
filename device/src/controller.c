@@ -20,6 +20,7 @@
 
 #include <assert.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "btcore/include/bdaddr.h"
 #include "bt_types.h"
@@ -33,6 +34,7 @@
 #include "btcore/include/module.h"
 #include "stack/include/btm_ble_api.h"
 #include "btcore/include/version.h"
+#include "osi/include/log.h"
 
 const bt_event_mask_t BLE_EVENT_MASK = { "\x00\x00\x00\x00\x00\x00\x06\x7f" };
 
@@ -160,20 +162,38 @@ static future_t *start_up(void) {
 
   // Done telling the controller about what page 0 features we support
   // Request the remaining feature pages
-  while (page_number <= last_features_classic_page_index &&
-         page_number < MAX_FEATURES_CLASSIC_PAGE_COUNT) {
-    response = AWAIT_COMMAND(packet_factory->make_read_local_extended_features(page_number));
-    packet_parser->parse_read_local_extended_features_response(
-      response,
-      &page_number,
-      &last_features_classic_page_index,
-      features_classic,
-      MAX_FEATURES_CLASSIC_PAGE_COUNT
-    );
-
-    page_number++;
+if (!strncmp(g_bt_chip_type, "RTL", 3)) { //#ifdef BLUETOOTH_RTK
+  if(HCI_LMP_EXTENDED_SUPPORTED(features_classic[0].as_array))
+  {
+	  while (page_number < MAX_FEATURES_CLASSIC_PAGE_COUNT) {
+	    response = AWAIT_COMMAND(packet_factory->make_read_local_extended_features(page_number));
+	    packet_parser->parse_read_local_extended_features_response(
+	      response,
+	      &page_number,
+	      &last_features_classic_page_index,
+	      features_classic,
+	      MAX_FEATURES_CLASSIC_PAGE_COUNT
+	    );
+		if(page_number == last_features_classic_page_index) //max page number == current page number,then break;
+			break;
+		page_number++; //otherwise£¬read next page
+	  }
   }
+} else { //#else
+	while (page_number <= last_features_classic_page_index &&
+	         page_number < MAX_FEATURES_CLASSIC_PAGE_COUNT) {
+	    response = AWAIT_COMMAND(packet_factory->make_read_local_extended_features(page_number));
+	    packet_parser->parse_read_local_extended_features_response(
+	      response,
+	      &page_number,
+	      &last_features_classic_page_index,
+	      features_classic,
+	      MAX_FEATURES_CLASSIC_PAGE_COUNT
+	    );
 
+	    page_number++;
+	  }
+} //#endif
 #if (SC_MODE_INCLUDED == TRUE)
   secure_connections_supported = HCI_SC_CTRLR_SUPPORTED(features_classic[2].as_array);
   if (secure_connections_supported) {

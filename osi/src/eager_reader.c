@@ -202,8 +202,9 @@ size_t eager_reader_read(eager_reader_t *reader, uint8_t *buffer, size_t max_siz
       reader->current_buffer = NULL;
     }
   }
-
+	
   bytes_available -= bytes_consumed;
+//  LOG_ERROR("%s inbound_data_waiting bytes_available", __func__);
   if (eventfd_write(reader->bytes_available_fd, bytes_available) == -1) {
     LOG_ERROR("%s unable to write back bytes available for output data.", __func__);
   }
@@ -245,6 +246,7 @@ static void inbound_data_waiting(void *context) {
   buffer->offset = 0;
 
   int bytes_read = read(reader->inbound_fd, buffer->data, reader->buffer_size);
+//  LOG_ERROR("%s inbound_data_waiting bytes_read:%d", __func__,bytes_read);
   if (bytes_read > 0) {
     // Save the data for later
     buffer->length = bytes_read;
@@ -252,6 +254,7 @@ static void inbound_data_waiting(void *context) {
 
     // Tell consumers data is available by incrementing
     // the semaphore by the number of bytes we just read
+//    LOG_ERROR("%s inbound_data_waiting", __func__);
     eventfd_write(reader->bytes_available_fd, bytes_read);
   } else {
     if (bytes_read == 0)
@@ -265,7 +268,7 @@ static void inbound_data_waiting(void *context) {
 
 static void internal_outbound_read_ready(void *context) {
   assert(context != NULL);
-
+//  LOG_ERROR("%s internal_outbound_read_ready", __func__);
   eager_reader_t *reader = (eager_reader_t *)context;
   reader->outbound_read_ready(reader, reader->outbound_context);
 }

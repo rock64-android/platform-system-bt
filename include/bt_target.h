@@ -675,7 +675,13 @@
 
 /* Minimum number of ACL credit for high priority link */
 #ifndef L2CAP_HIGH_PRI_MIN_XMIT_QUOTA
+/*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
+#ifdef BLUETOOTH_RTK_COEX
+#define L2CAP_HIGH_PRI_MIN_XMIT_QUOTA       8
+#else
 #define L2CAP_HIGH_PRI_MIN_XMIT_QUOTA       5
+#endif
+/*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
 #endif
 
 /* used for monitoring HCI ACL credit management */
@@ -1655,7 +1661,11 @@ The maximum number of payload octets that the local device can receive in a sing
 ******************************************************************************/
 
 #ifndef HCILP_INCLUDED
+#ifdef BLUETOOTH_RTK
+#define HCILP_INCLUDED                  FALSE
+#else
 #define HCILP_INCLUDED                  TRUE
+#endif
 #endif
 
 /******************************************************************************

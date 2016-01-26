@@ -30,7 +30,14 @@
 
 #define LAST_VENDOR_OPCODE_VALUE VENDOR_DO_EPILOG
 
+#ifdef BLUETOOTH_RTK
+#include "bdroid_buildcfg.h"
+static const char *VENDOR_LIBRARY_NAME_USB = "libbt-vendor_usb.so";
+static const char *VENDOR_LIBRARY_NAME_UART = "libbt-vendor_uart.so";
+#else
+#endif
 static const char *VENDOR_LIBRARY_NAME = "libbt-vendor.so";
+
 static const char *VENDOR_LIBRARY_SYMBOL_NAME = "BLUETOOTH_VENDOR_LIB_INTERFACE";
 
 static const vendor_t interface;
@@ -52,11 +59,11 @@ static bool vendor_open(
   hci = hci_interface;
 
   extern int check_wifi_chip_type_string(char *type);
-  check_wifi_chip_type_string(type);
-  if (strstr(type, "AU")!=NULL || strstr(type, "BU")!=NULL) {
-    strcpy(vendor_so, "libbt-vendor-rtl8723bu.so");
-  } else if (!strncmp(type, "RTL", 3)) {
-    strcpy(vendor_so, "libbt-vendor-rtl8723bs.so");
+  check_wifi_chip_type_string(g_bt_chip_type);
+  if (strstr(g_bt_chip_type, "AU")!=NULL || strstr(g_bt_chip_type, "BU")!=NULL) {
+    strcpy(vendor_so, VENDOR_LIBRARY_NAME_USB);
+  } else if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+    strcpy(vendor_so, VENDOR_LIBRARY_NAME_UART);
   } else {
     strcpy(vendor_so, VENDOR_LIBRARY_NAME);
   }
@@ -185,7 +192,13 @@ static void transmit_completed_callback(BT_HDR *response, void *context) {
 // Called back from vendor library when it wants to send an HCI command.
 static uint8_t transmit_cb(UNUSED_ATTR uint16_t opcode, void *buffer, tINT_CMD_CBACK callback) {
   assert(hci != NULL);
+#ifdef BLUETOOTH_RTK
+if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  hci->transmit_int_command(opcode, (BT_HDR *)buffer, callback);
+} else {
   hci->transmit_command((BT_HDR *)buffer, transmit_completed_callback, NULL, callback);
+}
+#endif
   return true;
 }
 

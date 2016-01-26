@@ -20,6 +20,8 @@
 
 #include <cutils/log.h>
 
+extern char g_bt_chip_type[];
+
 #define LOG_VERBOSE(...) ALOGV(__VA_ARGS__)
 #define LOG_DEBUG(...)   ALOGD(__VA_ARGS__)
 #define LOG_INFO(...)    ALOGI(__VA_ARGS__)

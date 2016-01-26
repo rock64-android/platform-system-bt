@@ -44,6 +44,9 @@
 #include "packet_fragmenter.h"
 #include "osi/include/reactor.h"
 #include "vendor.h"
+#ifdef BLUETOOTH_RTK_COEX
+#include "rtk_parse.h"
+#endif
 
 // TODO(zachoverflow): remove this hack extern
 #include <hardware/bluetooth.h>
@@ -108,15 +111,28 @@ static bool interface_created;
 static hci_t interface;
 
 // Modules we import and callbacks we export
+
 static const allocator_t *buffer_allocator;
 static const btsnoop_t *btsnoop;
 static const hci_hal_t *hal;
+
+char g_bt_chip_type[64];
+#ifdef BLUETOOTH_RTK
+static const tHCI_IF *hci_h5;
+char bt_hci_device_node[512] = {0};
+bool bluetooth_rtk_h5_flag = FALSE;//Default Usb H4 Interfcace ,if ture Uart H5 Interface
+extern const hci_hal_t *hci_get_h5_interface();
+#endif
+
 static const hci_hal_callbacks_t hal_callbacks;
 static const hci_inject_t *hci_inject;
 static const low_power_manager_t *low_power_manager;
 static const packet_fragmenter_t *packet_fragmenter;
 static const packet_fragmenter_callbacks_t packet_fragmenter_callbacks;
 static const vendor_t *vendor;
+#ifdef BLUETOOTH_RTK_COEX
+static const rtk_parse_manager_t *rtk_parse_manager;
+#endif
 
 static future_t *startup_future;
 static thread_t *thread; // We own this
@@ -235,8 +251,28 @@ static future_t *start_up(void) {
   fixed_queue_register_dequeue(packet_queue, thread_get_reactor(thread), event_packet_ready, NULL);
 
   vendor->open(btif_local_bd_addr.address, &interface);
+
+/*we add BLUETOOTH_RTK_H5 Flag Here*/
+#ifdef BLUETOOTH_RTK
+  if (strstr(g_bt_chip_type, "AU")!=NULL || strstr(g_bt_chip_type, "BU")!=NULL) {
+  	bluetooth_rtk_h5_flag = FALSE;
+  } else if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  	bluetooth_rtk_h5_flag = TRUE;
+  }else {
+	bluetooth_rtk_h5_flag = FALSE;
+  }
+  LOG_INFO("%s bluetooth_rtk_h5_flag :%d", __func__,bluetooth_rtk_h5_flag);
+  if(bluetooth_rtk_h5_flag)
+  	hci_h5->init(&packet_fragmenter_callbacks,buffer_allocator);
+#endif
+  
   hal->init(&hal_callbacks, thread);
   low_power_manager->init(thread);
+#ifdef BLUETOOTH_RTK_COEX
+if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  rtk_parse_manager->rtk_parse_init(&interface);
+}
+#endif
 
   vendor->set_callback(VENDOR_CONFIGURE_FIRMWARE, firmware_config_callback);
   vendor->set_callback(VENDOR_CONFIGURE_SCO, sco_config_callback);
@@ -302,13 +338,27 @@ static future_t *shut_down() {
   epilog_timer = NULL;
   command_response_timer = NULL;
 
+#ifdef BLUETOOTH_RTK
+  if(bluetooth_rtk_h5_flag)
+  	hci_h5->cleanup();
+#endif
+  LOG_DEBUG("%s hal->close()", __func__);
+
   low_power_manager->cleanup();
   hal->close();
+  /*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
+#ifdef BLUETOOTH_RTK_COEX
+if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  rtk_parse_manager->rtk_parse_cleanup();
+}
+#endif
+  /*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
 
   // Turn off the chip
   int power_state = BT_VND_PWR_OFF;
   vendor->send_command(VENDOR_CHIP_POWER_CONTROL, &power_state);
   vendor->close();
+  LOG_DEBUG("%s thread_free(thread);", __func__);
 
   thread_free(thread);
   thread = NULL;
@@ -340,6 +390,13 @@ static void set_data_queue(fixed_queue_t *queue) {
   upwards_data_queue = queue;
 }
 
+#ifdef BLUETOOTH_RTK
+static void transmit_int_command(uint16_t opcode, void *buffer,tINT_CMD_CBACK callback) {
+	LOG_ERROR("%s hci_h5->send_int_cmd.", __func__);
+    hci_h5->send_int_cmd(opcode, buffer, callback);
+}
+#endif
+
 static void transmit_command(
     BT_HDR *command,
     command_complete_cb complete_callback,
@@ -357,6 +414,7 @@ static void transmit_command(
   wait_entry->status_callback = status_callback;
   wait_entry->command = command;
   wait_entry->context = context;
+  //LOG_ERROR("%s transmit_command  wait_entry->opcode:%d", __func__,wait_entry->opcode);
 
   // Store the command message type in the event field
   // in case the upper layer didn't already
@@ -375,6 +433,7 @@ static future_t *transmit_command_futured(BT_HDR *command) {
   STREAM_TO_UINT16(wait_entry->opcode, stream);
   wait_entry->complete_future = future;
   wait_entry->command = command;
+  //LOG_ERROR("%s transmit_command_futured  wait_entry->opcode:%d", __func__,wait_entry->opcode);
 
   // Store the command message type in the event field
   // in case the upper layer didn't already
@@ -463,10 +522,24 @@ static void event_command_ready(fixed_queue_t *queue, UNUSED_ATTR void *context)
 
     // Send it off
     low_power_manager->wake_assert();
-    packet_fragmenter->fragment_and_dispatch(wait_entry->command);
-    low_power_manager->transmit_done();
 
-    non_repeating_timer_restart_if(command_response_timer, !list_is_empty(commands_pending_response));
+#ifdef BLUETOOTH_RTK
+  if(bluetooth_rtk_h5_flag)
+	hci_h5->send(wait_entry->command);
+  else
+   	packet_fragmenter->fragment_and_dispatch(wait_entry->command);
+#else
+  packet_fragmenter->fragment_and_dispatch(wait_entry->command);
+#endif
+  low_power_manager->transmit_done();
+
+#ifdef BLUETOOTH_RTK
+  if(!bluetooth_rtk_h5_flag){
+	non_repeating_timer_restart_if(command_response_timer, !list_is_empty(commands_pending_response));
+  }
+#else
+  non_repeating_timer_restart_if(command_response_timer, !list_is_empty(commands_pending_response));
+#endif
   }
 }
 
@@ -475,21 +548,42 @@ static void event_packet_ready(fixed_queue_t *queue, UNUSED_ATTR void *context) 
   BT_HDR *packet = (BT_HDR *)fixed_queue_dequeue(queue);
 
   low_power_manager->wake_assert();
+#ifdef BLUETOOTH_RTK
+  if(bluetooth_rtk_h5_flag)
+  	hci_h5->send(packet);
+  else
+  	packet_fragmenter->fragment_and_dispatch(packet);
+#else
   packet_fragmenter->fragment_and_dispatch(packet);
+#endif
   low_power_manager->transmit_done();
 }
 
+//we could apply H5 interface Here
 // Callback for the fragmenter to send a fragment
 static void transmit_fragment(BT_HDR *packet, bool send_transmit_finished) {
   uint16_t event = packet->event & MSG_EVT_MASK;
   serial_data_type_t type = event_to_data_type(event);
+  /*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
+#ifdef BLUETOOTH_RTK_COEX
+if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  uint8_t *pp = ((uint8_t *)(packet + 1)) + packet->offset;
+  if (event == MSG_STACK_TO_HC_HCI_ACL)
+		rtk_parse_manager->rtk_parse_l2cap_data(pp,1);
+  if (event == MSG_STACK_TO_HC_HCI_CMD)
+		rtk_parse_manager->rtk_parse_command(pp);
+}		
+#endif
+  /*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
 
   btsnoop->capture(packet, false);
+  //LOG_ERROR("%s hal->transmit_data", __func__);
   hal->transmit_data(type, packet->data + packet->offset, packet->len);
 
   if (event != MSG_STACK_TO_HC_HCI_CMD && send_transmit_finished)
     buffer_allocator->free(packet);
 }
+
 
 static void fragmenter_transmit_finished(BT_HDR *packet, bool all_fragments_sent) {
   if (all_fragments_sent) {
@@ -526,9 +620,20 @@ static void command_timed_out(UNUSED_ATTR void *context) {
 // This function is not required to read all of a packet in one go, so
 // be wary of reentry. But this function must return after finishing a packet.
 static void hal_says_data_ready(serial_data_type_t type) {
+
   packet_receive_data_t *incoming = &incoming_packets[PACKET_TYPE_TO_INBOUND_INDEX(type)];
 
+  //LOG_ERROR("%s type:%d", __func__,type);
   uint8_t byte;
+#ifdef BLUETOOTH_RTK
+  if(bluetooth_rtk_h5_flag){
+	  while(hal->read_data(type, &byte, 1, false) != 0) {
+  	  //LOG_ERROR("%s hci_h5->rcv(&byte):%d", __func__,byte);
+  	  hci_h5->rcv(&byte);
+  	  } 
+   } else {   
+#endif
+  //LOG_ERROR("%s hci_h4->rcv(&byte):%d", __func__,byte);
   while (hal->read_data(type, &byte, 1, false) != 0) {
     switch (incoming->state) {
       case BRAND_NEW:
@@ -625,6 +730,9 @@ static void hal_says_data_ready(serial_data_type_t type) {
       return;
     }
   }
+#ifdef BLUETOOTH_RTK
+  }
+#endif
 }
 
 // Returns true if the event was intercepted and should not proceed to
@@ -635,14 +743,24 @@ static bool filter_incoming_event(BT_HDR *packet) {
   uint8_t *stream = packet->data;
   uint8_t event_code;
   command_opcode_t opcode;
-
+/*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
+#ifdef BLUETOOTH_RTK_COEX
+#ifdef BLUETOOTH_RTK
+if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  if(!bluetooth_rtk_h5_flag)
+  	rtk_parse_manager->rtk_parse_internal_event_intercept(stream);
+}  	
+#endif
+#endif
+/*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
+  
   STREAM_TO_UINT8(event_code, stream);
   STREAM_SKIP_UINT8(stream); // Skip the parameter total length field
-
+  //LOG_ERROR("%s event_code:%d", __func__,event_code);
   if (event_code == HCI_COMMAND_COMPLETE_EVT) {
     STREAM_TO_UINT8(command_credits, stream);
     STREAM_TO_UINT16(opcode, stream);
-
+	//LOG_ERROR("%s HCI_COMMAND_COMPLETE_EVT event_code:%d  opcode:%d", __func__,event_code,opcode);
     wait_entry = get_waiting_command(opcode);
     if (!wait_entry)
       LOG_WARN("%s command complete event with no matching command. opcode: 0x%x.", __func__, opcode);
@@ -657,7 +775,7 @@ static bool filter_incoming_event(BT_HDR *packet) {
     STREAM_TO_UINT8(status, stream);
     STREAM_TO_UINT8(command_credits, stream);
     STREAM_TO_UINT16(opcode, stream);
-
+	//LOG_ERROR("%s HCI_COMMAND_STATUS_EVT event_code:%d  opcode:%d", __func__,event_code,opcode);
     // If a command generates a command status event, it won't be getting a command complete event
 
     wait_entry = get_waiting_command(opcode);
@@ -671,30 +789,58 @@ static bool filter_incoming_event(BT_HDR *packet) {
 
   return false;
 intercepted:;
-  non_repeating_timer_restart_if(command_response_timer, !list_is_empty(commands_pending_response));
-
+#ifdef BLUETOOTH_RTK
+  if(!bluetooth_rtk_h5_flag)
+  	non_repeating_timer_restart_if(command_response_timer, !list_is_empty(commands_pending_response));
+#else
+  	non_repeating_timer_restart_if(command_response_timer, !list_is_empty(commands_pending_response));
+#endif
   if (wait_entry) {
     // If it has a callback, it's responsible for freeing the packet
-    if (event_code == HCI_COMMAND_STATUS_EVT || (!wait_entry->complete_callback && !wait_entry->complete_future))
+    if (event_code == HCI_COMMAND_STATUS_EVT && (!wait_entry->complete_callback && !wait_entry->complete_future)){	 
       buffer_allocator->free(packet);
-
+    }
     // If it has a callback, it's responsible for freeing the command
-    if (event_code == HCI_COMMAND_COMPLETE_EVT || !wait_entry->status_callback)
+    if (event_code == HCI_COMMAND_COMPLETE_EVT || !wait_entry->status_callback){	 
       buffer_allocator->free(wait_entry->command);
+    }
 
-    osi_free(wait_entry);
+   osi_free(wait_entry);
   } else {
+  	
     buffer_allocator->free(packet);
   }
 
   return true;
 }
 
+
+
 // Callback for the fragmenter to dispatch up a completely reassembled packet
 static void dispatch_reassembled(BT_HDR *packet) {
   // Events should already have been dispatched before this point
+  //LOG_ERROR("%s packet->event:0x%x, packet->event & MSG_EVT_MASK:0x%x ", __func__,packet->event,packet->event & MSG_EVT_MASK);
+#ifdef BLUETOOTH_RTK
+  if(!bluetooth_rtk_h5_flag)
+  	assert((packet->event & MSG_EVT_MASK) != MSG_HC_TO_STACK_HCI_EVT);
+#else
   assert((packet->event & MSG_EVT_MASK) != MSG_HC_TO_STACK_HCI_EVT);
+#endif
   assert(upwards_data_queue != NULL);
+  
+  /*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
+#ifdef BLUETOOTH_RTK_COEX
+if (!strncmp(g_bt_chip_type, "RTL", 3)) {
+  if(!bluetooth_rtk_h5_flag) {
+	if ((packet->event& MSG_EVT_MASK) == MSG_HC_TO_STACK_HCI_ACL)
+	{
+		uint8_t *pp = ((uint8_t *)(packet + 1)) + packet->offset;
+		rtk_parse_manager->rtk_parse_l2cap_data(pp,0);
+	}
+  }
+}
+#endif
+  /*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
 
   if (upwards_data_queue) {
     fixed_queue_enqueue(upwards_data_queue, packet);
@@ -755,6 +901,9 @@ static void init_layer_interface() {
     }
 
     interface.set_data_queue = set_data_queue;
+#ifdef BLUETOOTH_RTK
+	interface.transmit_int_command = transmit_int_command;
+#endif
     interface.transmit_command = transmit_command;
     interface.transmit_command_futured = transmit_command_futured;
     interface.transmit_downward = transmit_downward;
@@ -769,7 +918,8 @@ static const hci_hal_callbacks_t hal_callbacks = {
 static const packet_fragmenter_callbacks_t packet_fragmenter_callbacks = {
   transmit_fragment,
   dispatch_reassembled,
-  fragmenter_transmit_finished
+  fragmenter_transmit_finished,
+  filter_incoming_event
 };
 
 const hci_t *hci_layer_get_interface() {
@@ -780,7 +930,12 @@ const hci_t *hci_layer_get_interface() {
   packet_fragmenter = packet_fragmenter_get_interface();
   vendor = vendor_get_interface();
   low_power_manager = low_power_manager_get_interface();
-
+#ifdef BLUETOOTH_RTK
+  hci_h5 =  hci_get_h5_interface();
+#endif
+#ifdef BLUETOOTH_RTK_COEX
+  rtk_parse_manager = rtk_parse_manager_get_interface();
+#endif
   init_layer_interface();
   return &interface;
 }
