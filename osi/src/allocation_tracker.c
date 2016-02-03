@@ -155,8 +155,14 @@ void *allocation_tracker_notify_free(uint8_t allocator_id, void *ptr) {
 
   allocation_t *allocation = (allocation_t *)hash_map_get(allocations, ptr);
   assert(allocation);                               // Must have been tracked before
-  assert(!allocation->freed);                       // Must not be a double free
+  //assert(!allocation->freed);                       // Must not be a double free
   assert(allocation->allocator_id == allocator_id); // Must be from the same allocator
+
+  if (allocation->freed) {
+    pthread_mutex_unlock(&lock);
+    return ptr;
+  }
+
   allocation->freed = true;
 
   const char *beginning_canary = ((char *)ptr) - canary_size;
