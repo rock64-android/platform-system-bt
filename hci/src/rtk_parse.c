@@ -1914,7 +1914,7 @@ void rtk_parse_init(hci_t *hci_if)
 	init_profile_hash(&rtk_prof);
 	init_connection_hash(&rtk_prof);
 
-    create_udpsocket_socket();
+    //create_udpsocket_socket();
 	hci_interface = hci_if;
 }
 
@@ -1931,8 +1931,8 @@ void rtk_parse_cleanup()
 	flush_profile_hash(&rtk_prof);
     pthread_mutex_destroy(&rtk_prof.profile_mutex);
 
-    stop_udpsocket_receive_thread();    
-    pthread_mutex_destroy(&rtk_prof.udpsocket_mutex);
+    //stop_udpsocket_receive_thread();    
+    //pthread_mutex_destroy(&rtk_prof.udpsocket_mutex);
 
     rtk_prof.polling_enable = 0;
     rtk_prof.profile_bitmap = 0;

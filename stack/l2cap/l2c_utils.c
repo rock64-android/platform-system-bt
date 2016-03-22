@@ -2505,10 +2505,12 @@ BOOLEAN l2cu_set_acl_priority (BD_ADDR bd_addr, UINT8 priority, BOOLEAN reset_af
         L2CAP_TRACE_WARNING ("L2CAP - no LCB for L2CA_SetAclPriority");
         return (FALSE);
     }
-	/*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
-//#ifndef BLUETOOTH_RTK_COEX
+/*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
+#ifdef BLUETOOTH_RTK_COEX
     if (!strncmp(g_bt_chip_type, "RTL", 3) || BTM_IS_BRCM_CONTROLLER())
-//#endif
+#else
+    if (BTM_IS_BRCM_CONTROLLER())
+#endif
 /*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
     {
         /* Called from above L2CAP through API; send VSC if changed */
@@ -2523,10 +2525,12 @@ BOOLEAN l2cu_set_acl_priority (BD_ADDR bd_addr, UINT8 priority, BOOLEAN reset_af
             UINT16_TO_STREAM (pp, p_lcb->handle);
             UINT8_TO_STREAM  (pp, vs_param);
 /*BOARD_HAVE_BLUETOOTH_RTK_COEX begin*/
-//#ifndef BLUETOOTH_RTK_COEX
+#ifdef BLUETOOTH_RTK_COEX
             if (0 != strncmp(g_bt_chip_type, "RTL", 3))
             BTM_VendorSpecificCommand (HCI_BRCM_SET_ACL_PRIORITY, HCI_BRCM_ACL_PRIORITY_PARAM_SIZE, command, NULL);
-//#endif
+#else
+            BTM_VendorSpecificCommand (HCI_BRCM_SET_ACL_PRIORITY, HCI_BRCM_ACL_PRIORITY_PARAM_SIZE, command, NULL);
+#endif
 /*BOARD_HAVE_BLUETOOTH_RTK_COEX end*/
 
             /* Adjust lmp buffer allocation for this channel if priority changed */
